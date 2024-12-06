@@ -1,53 +1,74 @@
-import requests
+from highrise.models import *
+import asyncio
+from asyncio import Task
 
-# Lista de IDs de administradores permitidos
-ADMIN_IDS = ["Russo_lee", "Docinho06"]  # IDs dos administradores
+async def follow_user(self: BaseBot, user: User, message: str) -> None:
+    """
+    Função principal para seguir outro usuário baseado no nickname.
+    """
+    async def following_loop(self: BaseBot, user: User, message: str) -> None:
+        if message.startswith("/following_loop"):
+            await self.highrise.chat("Comando inválido, use /follow <nickname>")
+            return
 
-def is_admin(user_id):
-    """
-    Verifica se o usuário é um administrador.
-    """
-    return user_id in ADMIN_IDS
+        while True:
+            # Obtém a lista de usuários na sala
+            room_users = (await self.highrise.get_room_users()).content
+            for room_user, position in room_users:
+                if room_user.id == user.id:
+                    user_position = position
+                    break
+            print(user_position)
+            if type(user_position) != AnchorPosition:
+                await self.highrise.walk_to(Position(user_position.x + 1, user_position.y, user_position.z))
+            await asyncio.sleep(0.5)
 
-def follow_user(bot_id, user_id, bot_token):
+    # Verifica se já existe uma tarefa para seguir alguém
+    taskgroup = self.highrise.tg
+    task_list = list(taskgroup._tasks)
+    for task in task_list:
+        if task.get_name() == "following_loop":
+            await self.highrise.chat("Já estou seguindo alguém.")
+            return
+
+    # Cria a tarefa para seguir o usuário
+    taskgroup.create_task(coro=following_loop(self, user, message))
+    task_list: list[Task] = list(taskgroup._tasks)
+
+    # Define o nome da tarefa para "following_loop"
+    for task in task_list:
+        if task.get_coro().__name__ == "following_loop":
+            task.set_name("following_loop")
+    await self.highrise.chat(f"Estou seguindo {user.username} 🚶‍♂️")
+
+
+async def stop_following(self: BaseBot, user: User, message: str) -> None:
     """
-    Faz o bot seguir outro usuário no Highrise.
+    Função para parar de seguir o usuário.
     """
-    API_URL = "https://api.highrise.com/bots/{bot_id}/follow"  # URL da API do Highrise
-    endpoint = API_URL.format(bot_id=bot_id)
+    taskgroup = self.highrise.tg
+    task_list = list(taskgroup._tasks)
     
-    headers = {
-        "Authorization": f"Bearer {bot_token}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "target_user_id": user_id
-    }
+    for task in task_list:
+        if task.get_name() == "following_loop":
+            task.cancel()
+            await self.highrise.chat(f"Parando de seguir {user.username}")
+            return
     
-    response = requests.post(endpoint, json=data, headers=headers)
+    await self.highrise.chat("Não estou seguindo ninguém.")
+    return
+
+
+async def follow_by_nickname(self: BaseBot, message: str) -> None:
+    """
+    Função para buscar o ID do usuário pelo nickname e seguir.
+    """
+    nickname = message.split(" ")[1]  # Espera que o comando seja "/follow <nickname>"
     
-    if response.status_code == 200:
-        print(f"Bot começou a seguir o usuário {user_id} com sucesso!")
+    # Aqui você deve fazer uma consulta para obter o ID do usuário com base no nickname
+    user = await self.highrise.get_user_by_nickname(nickname)  # Assumindo que essa função existe
+    
+    if user:
+        await follow_user(self, user, message)
     else:
-        print(f"Erro ao tentar seguir o usuário: {response.status_code} - {response.text}")
-
-if __name__ == "__main__":
-    # Configurações do bot
-    BOT_ID = "674b8e091ede9573ced12687"  # ID do bot
-    BOT_TOKEN = "22b096f68c51aa4cd055a2d195d5ee667d50b10937f62af280fb3c56049303cf"  # Token do bot
-
-    # Solicita o ID do usuário executando e o comando
-    executor_id = input("Digite seu ID de administrador: ")
-    if not is_admin(executor_id):
-        print("Acesso negado: Você não tem permissão para executar este comando.")
-        exit()
-
-    # Solicita o comando e o ID do usuário a ser seguido
-    command = input("Digite o comando (ex: follow <id_do_usuario>): ")
-    parts = command.split()
-
-    if len(parts) == 2 and parts[0].lower() == "follow":
-        user_id_to_follow = parts[1]
-        follow_user(BOT_ID, user_id_to_follow, BOT_TOKEN)
-    else:
-        print("Comando inválido! Use: follow <id_do_usuario>")
+        await self.highrise.chat(f"Usuário com o nickname '{nickname}' não encontrado.")
